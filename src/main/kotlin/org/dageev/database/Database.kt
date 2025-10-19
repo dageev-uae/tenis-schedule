@@ -21,7 +21,8 @@ object DatabaseFactory {
 
         // Собираем JDBC URL без credentials (они передаются отдельно)
         val port = if (uri.port == -1) 5432 else uri.port
-        val jdbcUrl = "jdbc:postgresql://${uri.host}:${port}${uri.path ?: "/postgres"}"
+        val path = uri.path?.ifEmpty { "/postgres" } ?: "/postgres"
+        val jdbcUrl = "jdbc:postgresql://${uri.host}:${port}${path}"
 
         return Triple(jdbcUrl, username, password)
     }
