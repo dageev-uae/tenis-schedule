@@ -11,15 +11,17 @@ import java.net.URI
 object DatabaseFactory {
     private val logger = LoggerFactory.getLogger(DatabaseFactory::class.java)
 
-    private fun parsePostgresUrl(databaseUrl: String): Triple<String, String?, String?> {
+    internal fun parsePostgresUrl(databaseUrl: String): Triple<String, String?, String?> {
         // Парсим URL формата: postgresql://username:password@host:port/database
-        val uri = URI(databaseUrl.replace("postgresql://", "jdbc:postgresql://"))
-        val userInfo = uri.userInfo?.split(":")
+        // Сначала парсим с оригинальной схемой postgresql://
+        val uri = URI(databaseUrl)
+        val userInfo = uri.userInfo?.split(":", limit = 2)  // limit=2 чтобы пароль с : не разбился
         val username = userInfo?.getOrNull(0)
         val password = userInfo?.getOrNull(1)
 
         // Собираем JDBC URL без credentials (они передаются отдельно)
-        val jdbcUrl = "jdbc:postgresql://${uri.host}:${uri.port}${uri.path}"
+        val port = if (uri.port == -1) 5432 else uri.port
+        val jdbcUrl = "jdbc:postgresql://${uri.host}:${port}${uri.path ?: "/postgres"}"
 
         return Triple(jdbcUrl, username, password)
     }
