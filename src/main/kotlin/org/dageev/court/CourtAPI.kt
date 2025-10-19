@@ -1,4 +1,4 @@
-package org.example.court
+package org.dageev.court
 
 import io.ktor.client.*
 import io.ktor.client.call.*

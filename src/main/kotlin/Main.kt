@@ -1,9 +1,9 @@
-package org.example
+package org.dageev
 
-import org.example.bot.TelegramBot
-import org.example.court.CourtAPI
-import org.example.database.DatabaseFactory
-import org.example.scheduler.BookingScheduler
+import org.dageev.bot.TelegramBot
+import org.dageev.court.CourtAPI
+import org.dageev.database.DatabaseFactory
+import org.dageev.scheduler.BookingScheduler
 import org.slf4j.LoggerFactory
 
 fun main() {

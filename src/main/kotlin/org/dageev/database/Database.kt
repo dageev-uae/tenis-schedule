@@ -1,6 +1,6 @@
-package org.example.database
+package org.dageev.database
 
-import org.example.database.models.Bookings
+import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction

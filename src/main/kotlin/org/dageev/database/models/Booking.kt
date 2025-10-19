@@ -1,11 +1,10 @@
-package org.example.database.models
+package org.dageev.database.models
 
 import org.jetbrains.exposed.dao.IntEntity
 import org.jetbrains.exposed.dao.IntEntityClass
 import org.jetbrains.exposed.dao.id.EntityID
 import org.jetbrains.exposed.dao.id.IntIdTable
 import org.jetbrains.exposed.sql.javatime.datetime
-import java.time.LocalDateTime
 
 object Bookings : IntIdTable() {
     val userId = long("user_id")

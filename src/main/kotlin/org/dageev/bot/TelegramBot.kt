@@ -1,13 +1,12 @@
-package org.example.bot
+package org.dageev.bot
 
 import com.github.kotlintelegrambot.Bot
 import com.github.kotlintelegrambot.bot
 import com.github.kotlintelegrambot.dispatch
 import com.github.kotlintelegrambot.dispatcher.command
-import com.github.kotlintelegrambot.dispatcher.text
 import com.github.kotlintelegrambot.entities.ChatId
-import org.example.database.models.Booking
-import org.example.database.models.Bookings
+import org.dageev.database.models.Booking
+import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.time.LocalDateTime

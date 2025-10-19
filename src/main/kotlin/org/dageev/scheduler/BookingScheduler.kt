@@ -1,11 +1,11 @@
-package org.example.scheduler
+package org.dageev.scheduler
 
 import kotlinx.coroutines.*
-import org.example.bot.TelegramBot
-import org.example.court.BookingResult
-import org.example.court.CourtAPI
-import org.example.database.models.Booking
-import org.example.database.models.Bookings
+import org.dageev.bot.TelegramBot
+import org.dageev.court.BookingResult
+import org.dageev.court.CourtAPI
+import org.dageev.database.models.Booking
+import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory

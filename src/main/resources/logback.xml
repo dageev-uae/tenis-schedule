@@ -23,7 +23,7 @@
     </root>
 
     <!-- Более детальное логирование для наших пакетов -->
-    <logger name="org.example" level="DEBUG" />
+    <logger name="org.dageev" level="DEBUG" />
 
     <!-- Уменьшаем логирование для внешних библиотек -->
     <logger name="io.ktor" level="INFO" />
