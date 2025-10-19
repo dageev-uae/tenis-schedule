@@ -2,9 +2,10 @@ plugins {
     kotlin("jvm") version "2.2.20"
     kotlin("plugin.serialization") version "2.2.20"
     application
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
-group = "org.example"
+group = "org.dageev"
 version = "1.0-SNAPSHOT"
 
 repositories {
@@ -45,7 +46,7 @@ dependencies {
 }
 
 application {
-    mainClass.set("org.example.MainKt")
+    mainClass.set("org.dageev.MainKt")
 }
 
 tasks.test {
@@ -54,4 +55,13 @@ tasks.test {
 
 kotlin {
     jvmToolchain(23)
+}
+
+tasks.shadowJar {
+    archiveBaseName.set("app")
+    archiveClassifier.set("")
+    archiveVersion.set("")
+    manifest {
+        attributes["Main-Class"] = "org.dageev.MainKt"
+    }
 }

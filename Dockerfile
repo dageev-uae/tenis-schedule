@@ -1,5 +1,5 @@
 # Multi-stage build для оптимизации размера образа
-FROM gradle:8.5-jdk17 AS builder
+FROM gradle:8.5-jdk21 AS builder
 
 WORKDIR /app
 
@@ -10,16 +10,16 @@ COPY gradle ./gradle
 # Копируем исходный код
 COPY src ./src
 
-# Собираем приложение
-RUN gradle build --no-daemon -x test
+# Собираем приложение с Shadow JAR (создает fat JAR с манифестом)
+RUN gradle shadowJar --no-daemon -x test
 
 # Финальный образ
-FROM openjdk:17-slim
+FROM eclipse-temurin:21-jre-jammy
 
 WORKDIR /app
 
-# Копируем собранный jar из builder stage
-COPY --from=builder /app/build/libs/*.jar app.jar
+# Копируем собранный fat JAR из builder stage
+COPY --from=builder /app/build/libs/app.jar app.jar
 
 # Переменные окружения (будут переопределены в Railway)
 ENV TELEGRAM_BOT_TOKEN=""
