@@ -6,10 +6,8 @@ build/
 !**/src/test/**/build/
 
 # IntelliJ IDEA
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+.idea
+
 *.iws
 *.iml
 *.ipr
@@ -68,3 +66,10 @@ logs/
 
 # Docker
 .dockerignore
+/.idea/codeStyles/codeStyleConfig.xml
+/.idea/gradle.xml
+/.idea/kotlinc.xml
+/.idea/material_theme_project_new.xml
+/.idea/misc.xml
+/.idea/codeStyles/Project.xml
+/.idea/vcs.xml
