@@ -20,8 +20,8 @@ data class LoginRequest(
     val device_source: String = "web",
     val app_os_version: String = "web",
     val app_version: String = "",
-    val ip_address: String = "",
-    val user_agent: String = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    val ip_address: String = "104.28.218.188",
+    val user_agent: String = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
     val access_code: String = "",
     val link_with_uae_pass: Boolean = false
 )
@@ -80,7 +80,8 @@ class CourtAPI {
 
     private val baseUrl = "https://digital.damacgroup.com/damacliving/api/v1"
     private val apiToken = "a740e9a60b62418ee08d65d53740c3346eef6edf994a0784f0def9ca13822a9b"
-    private val customIdentifier = "35caf711af6f59be5062de4742ed119a"
+    private val customIdentifierAuth = "8c619de8da1ac706a66276d3ecdd1054"
+    private val customIdentifierBooking = "2f936759a34caa82fb9fc1a809c17c0d"
 
     private val username = System.getenv("COURT_USERNAME") ?: ""
     private val password = System.getenv("COURT_PASSWORD") ?: ""
@@ -93,7 +94,7 @@ class CourtAPI {
      */
     suspend fun authenticate(): Boolean {
         return try {
-            logger.info("Attempting to authenticate...")
+            logger.info("Attempting to authenticate with username: $username")
 
             val loginRequest = LoginRequest(
                 user_name = username,
@@ -105,9 +106,18 @@ class CourtAPI {
                 header("accept", "application/json, text/plain, */*")
                 header("accept-language", "en")
                 header("api-token", apiToken)
+                header("dnt", "1")
                 header("origin", "https://www.damacliving.com")
+                header("priority", "u=1, i")
                 header("referer", "https://www.damacliving.com/")
-                header("x-custom-identifier", customIdentifier)
+                header("sec-ch-ua", "\"Chromium\";v=\"141\", \"Not?A_Brand\";v=\"8\"")
+                header("sec-ch-ua-mobile", "?0")
+                header("sec-ch-ua-platform", "\"macOS\"")
+                header("sec-fetch-dest", "empty")
+                header("sec-fetch-mode", "cors")
+                header("sec-fetch-site", "cross-site")
+                header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+                header("x-custom-identifier", customIdentifierAuth)
                 setBody(loginRequest)
             }
 
@@ -124,7 +134,8 @@ class CourtAPI {
                     false
                 }
             } else {
-                logger.error("Authentication failed: ${response.status} - ${response.bodyAsText()}")
+                // Не читаем тело ответа при ошибке, так как может быть проблема с кодировкой
+                logger.error("Authentication failed with status: ${response.status.value} ${response.status.description}")
                 false
             }
         } catch (e: Exception) {
@@ -159,9 +170,18 @@ class CourtAPI {
                 header("accept-language", "en")
                 header("api-token", apiToken)
                 header("authorization", "Bearer $accessToken")
+                header("dnt", "1")
                 header("origin", "https://www.damacliving.com")
+                header("priority", "u=1, i")
                 header("referer", "https://www.damacliving.com/")
-                header("x-custom-identifier", customIdentifier)
+                header("sec-ch-ua", "\"Chromium\";v=\"141\", \"Not?A_Brand\";v=\"8\"")
+                header("sec-ch-ua-mobile", "?0")
+                header("sec-ch-ua-platform", "\"macOS\"")
+                header("sec-fetch-dest", "empty")
+                header("sec-fetch-mode", "cors")
+                header("sec-fetch-site", "cross-site")
+                header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+                header("x-custom-identifier", customIdentifierBooking)
                 setBody(bookingRequest)
             }
 
@@ -175,9 +195,9 @@ class CourtAPI {
                     BookingResult.AlreadyBooked("Court already booked")
                 }
                 else -> {
-                    val body = response.bodyAsText()
-                    logger.error("Booking failed: ${response.status} - $body")
-                    BookingResult.Error("Booking failed: $body")
+                    // Не читаем тело ответа при ошибке, так как может быть проблема с кодировкой
+                    logger.error("Booking failed with status: ${response.status.value} ${response.status.description}")
+                    BookingResult.Error("Booking failed with status: ${response.status.value}")
                 }
             }
         } catch (e: Exception) {
