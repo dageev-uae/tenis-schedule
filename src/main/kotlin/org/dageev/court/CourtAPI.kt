@@ -134,8 +134,8 @@ class CourtAPI {
                     false
                 }
             } else {
-                // Не читаем тело ответа при ошибке, так как может быть проблема с кодировкой
-                logger.error("Authentication failed with status: ${response.status.value} ${response.status.description}")
+                val errorBody = response.bodyAsText()
+                logger.error("Authentication failed with status: ${response.status.value} ${response.status.description}, body: $errorBody")
                 false
             }
         } catch (e: Exception) {
