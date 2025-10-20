@@ -83,8 +83,8 @@ class CourtAPI {
     private val customIdentifierAuth = "8c619de8da1ac706a66276d3ecdd1054"
     private val customIdentifierBooking = "2f936759a34caa82fb9fc1a809c17c0d"
 
-    private val username = System.getenv("COURT_USERNAME") ?: ""
-    private val password = System.getenv("COURT_PASSWORD") ?: ""
+    private val username = System.getenv("COURT_USERNAME")?.trim() ?: ""
+    private val password = System.getenv("COURT_PASSWORD")?.trim() ?: ""
 
     private var accessToken: String? = null
     private var accountId: String? = null
@@ -96,10 +96,19 @@ class CourtAPI {
         return try {
             logger.info("Attempting to authenticate with username: $username")
 
+            // Проверяем, что username и password не пустые
+            if (username.isEmpty() || password.isEmpty()) {
+                logger.error("Username or password is empty! username='$username', password length=${password.length}")
+                return false
+            }
+
             val loginRequest = LoginRequest(
                 user_name = username,
                 password = password
             )
+
+            logger.info("Login request body: user_name=$username, password=[HIDDEN], ip_address=${loginRequest.ip_address}")
+            logger.info("Using api-token: ${apiToken.take(20)}..., x-custom-identifier: $customIdentifierAuth")
 
             val response: HttpResponse = client.post("$baseUrl/users/login") {
                 contentType(ContentType.Application.Json)
@@ -120,6 +129,8 @@ class CourtAPI {
                 header("x-custom-identifier", customIdentifierAuth)
                 setBody(loginRequest)
             }
+
+            logger.info("Response status: ${response.status.value}, headers: ${response.headers.entries().joinToString { "${it.key}=${it.value}" }}")
 
             if (response.status.isSuccess()) {
                 val loginResponse: LoginResponse = response.body()

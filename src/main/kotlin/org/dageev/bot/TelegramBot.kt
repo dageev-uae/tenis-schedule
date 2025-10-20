@@ -41,6 +41,7 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                           Пример: /schedule 2025-10-25
                         /list - показать все запланированные бронирования
                         /cancel <id> - отменить бронирование
+                        /test_auth - проверить подключение к системе бронирования
 
                         Бронирование будет выполнено автоматически ровно в полночь!
                     """.trimIndent()
@@ -240,6 +241,40 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                         bot.sendMessage(
                             chatId = ChatId.fromId(message.chat.id),
                             text = "Произошла ошибка при отмене бронирования: ${e.message}"
+                        )
+                    }
+                }
+
+                command("test_auth") {
+                    val chatId = ChatId.fromId(message.chat.id)
+
+                    bot.sendMessage(
+                        chatId = chatId,
+                        text = "Тестирую аутентификацию..."
+                    )
+
+                    try {
+                        val success = runBlocking {
+                            courtAPI.authenticate()
+                        }
+
+                        val responseText = if (success) {
+                            "✅ Аутентификация успешна!"
+                        } else {
+                            "❌ Ошибка аутентификации. Проверьте логи для деталей."
+                        }
+
+                        bot.sendMessage(
+                            chatId = chatId,
+                            text = responseText
+                        )
+
+                        logger.info("Test auth command executed, result: $success")
+                    } catch (e: Exception) {
+                        logger.error("Error testing authentication", e)
+                        bot.sendMessage(
+                            chatId = chatId,
+                            text = "Произошла ошибка при тестировании: ${e.message}"
                         )
                     }
                 }
