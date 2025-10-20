@@ -19,14 +19,14 @@ import java.util.zip.GZIPInputStream
 data class LoginRequest(
     val user_name: String,
     val password: String,
-    val app_id: Int = 3,
-    val device_source: String = "web",
-    val app_os_version: String = "web",
-    val app_version: String = "",
-    val ip_address: String = "104.28.218.188",
-    val user_agent: String = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
-    val access_code: String = "",
-    val link_with_uae_pass: Boolean = false
+    val app_id: Int,
+    val device_source: String,
+    val app_os_version: String,
+    val app_version: String,
+    val ip_address: String,
+    val user_agent: String,
+    val access_code: String,
+    val link_with_uae_pass: Boolean
 )
 
 @Serializable
@@ -145,7 +145,15 @@ class CourtAPI {
 
             val loginRequest = LoginRequest(
                 user_name = username,
-                password = password
+                password = password,
+                app_id = 3,
+                device_source = "web",
+                app_os_version = "web",
+                app_version = "",
+                ip_address = "104.28.218.188",
+                user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+                access_code = "",
+                link_with_uae_pass = false
             )
 
             logger.info("Login request body: user_name=$username, password=[HIDDEN], ip_address=${loginRequest.ip_address}")
@@ -166,12 +174,19 @@ class CourtAPI {
                 header("sec-fetch-dest", "empty")
                 header("sec-fetch-mode", "cors")
                 header("sec-fetch-site", "cross-site")
-                header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+                header(
+                    "user-agent",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+                )
                 header("x-custom-identifier", customIdentifierAuth)
                 setBody(loginRequest)
             }
 
-            logger.info("Response status: ${response.status.value}, headers: ${response.headers.entries().joinToString { "${it.key}=${it.value}" }}")
+            logger.info(
+                "Response status: ${response.status.value}, headers: ${
+                    response.headers.entries().joinToString { "${it.key}=${it.value}" }
+                }"
+            )
 
             if (response.status.isSuccess()) {
                 val loginResponse: LoginResponse = response.body()
@@ -236,7 +251,10 @@ class CourtAPI {
                 header("sec-fetch-dest", "empty")
                 header("sec-fetch-mode", "cors")
                 header("sec-fetch-site", "cross-site")
-                header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+                header(
+                    "user-agent",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+                )
                 header("x-custom-identifier", customIdentifierBooking)
                 setBody(bookingRequest)
             }
@@ -246,10 +264,12 @@ class CourtAPI {
                     logger.info("Booking successful for $date")
                     BookingResult.Success("Court booked successfully")
                 }
+
                 response.status == HttpStatusCode.Conflict -> {
                     logger.warn("Court already booked for $date")
                     BookingResult.AlreadyBooked("Court already booked")
                 }
+
                 else -> {
                     // Не читаем тело ответа при ошибке, так как может быть проблема с кодировкой
                     logger.error("Booking failed with status: ${response.status.value} ${response.status.description}")
