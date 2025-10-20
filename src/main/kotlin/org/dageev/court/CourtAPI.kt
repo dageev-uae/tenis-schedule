@@ -50,15 +50,15 @@ data class Party(
 
 @Serializable
 data class BookingRequest(
-    val origin: String = "Portal",
-    val fm_case_id: String = "",
+    val origin: String,
+    val fm_case_id: String,
     val account_id: String,
-    val booking_unit_id: String = "a0x07000008cCMPAA2",
-    val amenity_id: String = "a5Y1n000000eVcpEAE",
-    val amenity_slot_id: String = "a5XTY0000000EpN2AU",
+    val booking_unit_id: String,
+    val amenity_id: String,
+    val amenity_slot_id: String,
     val booking_date: String,
-    val no_of_guest: Int = 2,
-    val comments: String = ""
+    val no_of_guest: Int,
+    val comments: String
 )
 
 @Serializable
@@ -87,7 +87,7 @@ class CourtAPI {
                     log.info(message)
                 }
             }
-            level = LogLevel.ALL
+            level = LogLevel.NONE
         }
 
         // Automatically decompress gzip responses
@@ -231,8 +231,15 @@ class CourtAPI {
             }
 
             val bookingRequest = BookingRequest(
+                origin = "Portal",
+                fm_case_id = "",
                 account_id = accountId!!,
-                booking_date = date
+                booking_unit_id = "a0x07000008cCMPAA2",
+                amenity_id = "a5Y1n000000eVcpEAE",
+                amenity_slot_id = "a5XTY0000000EpN2AU",
+                booking_date = date,
+                no_of_guest = 2,
+                comments = ""
             )
 
             val response: HttpResponse = client.post("$baseUrl/amenities/registration") {
