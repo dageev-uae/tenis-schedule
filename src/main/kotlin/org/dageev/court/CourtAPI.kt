@@ -4,6 +4,7 @@ import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.plugins.logging.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -11,6 +12,8 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
+import java.io.ByteArrayInputStream
+import java.util.zip.GZIPInputStream
 
 @Serializable
 data class LoginRequest(
@@ -76,6 +79,25 @@ class CourtAPI {
                 ignoreUnknownKeys = true
             })
         }
+
+        install(Logging) {
+            logger = object : Logger {
+                private val log = org.slf4j.LoggerFactory.getLogger("HttpClient")
+                override fun log(message: String) {
+                    log.info(message)
+                }
+            }
+            level = LogLevel.HEADERS
+        }
+
+        // Automatically decompress gzip responses
+        engine {
+            endpoint {
+                keepAliveTime = 5000
+                connectTimeout = 30000
+                requestTimeout = 30000
+            }
+        }
     }
 
     private val baseUrl = "https://digital.damacgroup.com/damacliving/api/v1"
@@ -88,6 +110,25 @@ class CourtAPI {
 
     private var accessToken: String? = null
     private var accountId: String? = null
+
+    /**
+     * Декодирует gzip-сжатое тело ответа
+     */
+    private suspend fun readResponseBody(response: HttpResponse): String {
+        val contentEncoding = response.headers["Content-Encoding"]
+        val bodyBytes = response.readBytes()
+
+        return if (contentEncoding == "gzip" && bodyBytes.isNotEmpty()) {
+            try {
+                GZIPInputStream(ByteArrayInputStream(bodyBytes)).bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                logger.warn("Failed to decompress gzip body, trying as plain text", e)
+                String(bodyBytes, Charsets.UTF_8)
+            }
+        } else {
+            String(bodyBytes, Charsets.UTF_8)
+        }
+    }
 
     /**
      * Авторизация на сайте бронирования
@@ -145,8 +186,12 @@ class CourtAPI {
                     false
                 }
             } else {
-                val errorBody = response.bodyAsText()
-                logger.error("Authentication failed with status: ${response.status.value} ${response.status.description}, body: $errorBody")
+                try {
+                    val errorBody = readResponseBody(response)
+                    logger.error("Authentication failed with status: ${response.status.value} ${response.status.description}, body: $errorBody")
+                } catch (e: Exception) {
+                    logger.error("Authentication failed with status: ${response.status.value} ${response.status.description}, could not read body: ${e.message}")
+                }
                 false
             }
         } catch (e: Exception) {
