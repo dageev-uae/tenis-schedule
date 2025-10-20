@@ -8,7 +8,9 @@ import org.dageev.database.models.Booking
 import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
-import java.time.*
+import java.time.Duration
+import java.time.LocalDate
+import java.time.LocalDateTime
 
 class BookingScheduler(
     private val telegramBot: TelegramBot,
@@ -44,7 +46,9 @@ class BookingScheduler(
      * Обрабатывает все pending бронирования
      * Логика:
      * - Если до даты корта меньше 2 дней - выполняем сразу
-     * - Если 2 дня или больше - выполняем в полночь за 2 дня до даты корта
+     * - Если ровно 2 дня и время >= 23:57 - ждем полуночи
+     * - Если ровно 2 дня, но еще не 23:57 - выполняем сразу
+     * - Если больше 2 дней - ничего не делаем (ждем следующей проверки)
      */
     private suspend fun processAllPendingBookings() {
         val now = LocalDateTime.now()
@@ -67,12 +71,12 @@ class BookingScheduler(
 
             when {
                 // Если до даты корта меньше 2 дней - выполняем сразу
-                daysDiff < 2 -> {
+                daysDiff <= 2 -> {
                     logger.info("Booking #${booking.id.value} for $courtDate is less than 2 days away (${daysDiff} days) - executing immediately")
                     executeBookings(listOf(booking))
                 }
                 // Если ровно 2 дня и уже после 23:57 - ждем полуночи
-                daysDiff == 2L && now.hour >= 23 && now.minute >= 57 -> {
+                daysDiff == 3L && now.hour >= 23 && now.minute >= 57 -> {
                     logger.info("Booking #${booking.id.value} for $courtDate is exactly 2 days away - waiting until midnight")
                     waitUntilMidnight()
                     executeBookings(listOf(booking))
