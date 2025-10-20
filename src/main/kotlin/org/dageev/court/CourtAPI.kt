@@ -87,7 +87,7 @@ class CourtAPI {
                     log.info(message)
                 }
             }
-            level = LogLevel.HEADERS
+            level = LogLevel.ALL
         }
 
         // Automatically decompress gzip responses
