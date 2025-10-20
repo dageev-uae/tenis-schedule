@@ -1,5 +1,7 @@
 package org.dageev.database
 
+import com.zaxxer.hikari.HikariConfig
+import com.zaxxer.hikari.HikariDataSource
 import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.DatabaseConfig
@@ -20,9 +22,10 @@ object DatabaseFactory {
         val password = userInfo?.getOrNull(1)
 
         // Собираем JDBC URL без credentials (они передаются отдельно)
+        // Добавляем параметры для предотвращения ошибок с prepared statements
         val port = if (uri.port == -1) 5432 else uri.port
         val path = uri.path?.ifEmpty { "/postgres" } ?: "/postgres"
-        val jdbcUrl = "jdbc:postgresql://${uri.host}:${port}${path}"
+        val jdbcUrl = "jdbc:postgresql://${uri.host}:${port}${path}?prepareThreshold=0&preparedStatementCacheQueries=0"
 
         return Triple(jdbcUrl, username, password)
     }
@@ -31,19 +34,37 @@ object DatabaseFactory {
         val databaseUrl = System.getenv("DATABASE_URL")
 
         if (databaseUrl != null) {
-            // Production: PostgreSQL (Supabase/Railway)
-            logger.info("Initializing PostgreSQL database...")
+            // Production: PostgreSQL (Supabase/Railway) с HikariCP
+            logger.info("Initializing PostgreSQL database with HikariCP...")
 
             val (jdbcUrl, username, password) = parsePostgresUrl(databaseUrl)
             logger.info("Connecting to: $jdbcUrl (user: $username)")
 
+            val config = HikariConfig().apply {
+                this.jdbcUrl = jdbcUrl
+                this.driverClassName = "org.postgresql.Driver"
+                this.username = username ?: ""
+                this.password = password ?: ""
+
+                // Connection pool settings
+                maximumPoolSize = 5
+                minimumIdle = 2
+                idleTimeout = 300000 // 5 minutes
+                connectionTimeout = 10000 // 10 seconds
+                maxLifetime = 600000 // 10 minutes
+
+                // PostgreSQL specific settings для предотвращения ошибок prepared statements
+                addDataSourceProperty("cachePrepStmts", "false")
+                addDataSourceProperty("prepareThreshold", "0")
+                addDataSourceProperty("preparedStatementCacheQueries", "0")
+            }
+
+            val dataSource = HikariDataSource(config)
+
             Database.connect(
-                url = jdbcUrl,
-                driver = "org.postgresql.Driver",
-                user = username ?: "",
-                password = password ?: "",
+                datasource = dataSource,
                 databaseConfig = DatabaseConfig {
-                    useNestedTransactions = true
+                    useNestedTransactions = false
                 }
             )
         } else {

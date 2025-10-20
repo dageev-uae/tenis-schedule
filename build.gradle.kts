@@ -29,6 +29,8 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-jdbc:0.46.0")
     implementation("org.jetbrains.exposed:exposed-java-time:0.46.0")
     implementation("org.postgresql:postgresql:42.7.1")
+    // Connection Pool
+    implementation("com.zaxxer:HikariCP:5.1.0")
     // SQLite для локальной разработки (опционально)
     implementation("org.xerial:sqlite-jdbc:3.44.1.0")
 

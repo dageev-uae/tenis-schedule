@@ -33,8 +33,8 @@ class TelegramBot(private val token: String) {
                         Я бот для автоматического бронирования теннисных кортов.
 
                         Доступные команды:
-                        /schedule <дата> <время> - запланировать бронирование
-                          Пример: /schedule 2025-10-25 18:00
+                        /schedule <дата> - запланировать бронирование
+                          Пример: /schedule 2025-10-25
                         /list - показать все запланированные бронирования
                         /cancel <id> - отменить бронирование
 
@@ -50,25 +50,24 @@ class TelegramBot(private val token: String) {
                 }
 
                 command("schedule") {
-                    val userId = message.from?.id?.toLong() ?: return@command
+                    val userId = message.from?.id ?: return@command
                     val args = args
 
-                    if (args.size < 2) {
+                    if (args.isEmpty()) {
                         bot.sendMessage(
                             chatId = ChatId.fromId(message.chat.id),
-                            text = "Неверный формат. Используйте: /schedule YYYY-MM-DD HH:MM\nПример: /schedule 2025-10-25 18:00"
+                            text = "Неверный формат. Используйте: /schedule YYYY-MM-DD\nПример: /schedule 2025-10-25"
                         )
                         return@command
                     }
 
                     val date = args[0]
-                    val time = args[1]
 
-                    // Валидация формата даты и времени
-                    if (!isValidDate(date) || !isValidTime(time)) {
+                    // Валидация формата даты
+                    if (!isValidDate(date)) {
                         bot.sendMessage(
                             chatId = ChatId.fromId(message.chat.id),
-                            text = "Неверный формат даты или времени. Используйте YYYY-MM-DD и HH:MM"
+                            text = "Неверный формат даты. Используйте YYYY-MM-DD"
                         )
                         return@command
                     }
@@ -78,7 +77,7 @@ class TelegramBot(private val token: String) {
                             val booking = Booking.new {
                                 this.userId = userId
                                 this.courtDate = date
-                                this.courtTime = time
+                                this.courtTime = ""  // Время не используется
                                 this.createdAt = LocalDateTime.now()
                                 this.status = "pending"
                             }
@@ -87,10 +86,10 @@ class TelegramBot(private val token: String) {
 
                         bot.sendMessage(
                             chatId = ChatId.fromId(message.chat.id),
-                            text = "Бронирование запланировано!\n\nID: $bookingId\nДата: $date\nВремя: $time\n\nБронирование будет выполнено автоматически в полночь."
+                            text = "Бронирование запланировано!\n\nID: $bookingId\nДата: $date\n\nБронирование будет выполнено автоматически в полночь."
                         )
 
-                        logger.info("Booking scheduled: userId=$userId, date=$date, time=$time, bookingId=$bookingId")
+                        logger.info("Booking scheduled: userId=$userId, date=$date, bookingId=$bookingId")
                     } catch (e: Exception) {
                         logger.error("Error scheduling booking", e)
                         bot.sendMessage(
@@ -119,7 +118,6 @@ class TelegramBot(private val token: String) {
                             val bookingsList = bookings.joinToString("\n\n") { booking ->
                                 "ID: ${booking.id.value}\n" +
                                         "Дата: ${booking.courtDate}\n" +
-                                        "Время: ${booking.courtTime}\n" +
                                         "Статус: ${booking.status}"
                             }
 
@@ -206,16 +204,6 @@ class TelegramBot(private val token: String) {
         return try {
             val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
             java.time.LocalDate.parse(date, formatter)
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    private fun isValidTime(time: String): Boolean {
-        return try {
-            val formatter = DateTimeFormatter.ofPattern("HH:mm")
-            java.time.LocalTime.parse(time, formatter)
             true
         } catch (e: Exception) {
             false

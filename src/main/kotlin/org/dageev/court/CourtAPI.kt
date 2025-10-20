@@ -28,10 +28,41 @@ data class LoginRequest(
 
 @Serializable
 data class LoginResponse(
+    val data: LoginData? = null,
+    val meta_data: MetaData? = null
+)
+
+@Serializable
+data class LoginData(
+    val party: Party? = null
+)
+
+@Serializable
+data class Party(
     val access_token: String? = null,
-    val token: String? = null,
-    val success: Boolean = false,
-    val message: String? = null
+    val customer_name: String? = null,
+    val customer_type: String? = null,
+    val account_id: String? = null
+)
+
+@Serializable
+data class BookingRequest(
+    val origin: String = "Portal",
+    val fm_case_id: String = "",
+    val account_id: String,
+    val booking_unit_id: String = "a0x07000008cCMPAA2",
+    val amenity_id: String = "a5Y1n000000eVcpEAE",
+    val amenity_slot_id: String = "a5XTY0000000EpN2AU",
+    val booking_date: String,
+    val no_of_guest: Int = 2,
+    val comments: String = ""
+)
+
+@Serializable
+data class MetaData(
+    val title: String? = null,
+    val message: String? = null,
+    val status_code: Int? = null
 )
 
 class CourtAPI {
@@ -55,6 +86,7 @@ class CourtAPI {
     private val password = System.getenv("COURT_PASSWORD") ?: ""
 
     private var accessToken: String? = null
+    private var accountId: String? = null
 
     /**
      * Авторизация на сайте бронирования
@@ -81,13 +113,14 @@ class CourtAPI {
 
             if (response.status.isSuccess()) {
                 val loginResponse: LoginResponse = response.body()
-                accessToken = loginResponse.access_token ?: loginResponse.token
+                accessToken = loginResponse.data?.party?.access_token
+                accountId = loginResponse.data?.party?.account_id
 
-                if (accessToken != null) {
-                    logger.info("Authentication successful")
+                if (accessToken != null && accountId != null) {
+                    logger.info("Authentication successful for user: ${loginResponse.data?.party?.customer_name}, account_id: $accountId")
                     true
                 } else {
-                    logger.error("Authentication failed: No token in response")
+                    logger.error("Authentication failed: No token or account_id in response")
                     false
                 }
             } else {
@@ -103,21 +136,23 @@ class CourtAPI {
     /**
      * Бронирование корта
      * @param date Дата в формате YYYY-MM-DD
-     * @param time Время в формате HH:MM
-     * @param amenityId ID корта/amenity (опционально, можно добавить в параметры)
      * @return результат бронирования
      */
-    suspend fun bookCourt(date: String, time: String): BookingResult {
+    suspend fun bookCourt(date: String): BookingResult {
         return try {
-            logger.info("Attempting to book court for $date at $time")
+            logger.info("Attempting to book court for $date")
 
-            if (accessToken == null) {
+            if (accessToken == null || accountId == null) {
                 if (!authenticate()) {
                     return BookingResult.Error("Authentication failed")
                 }
             }
 
-            // Реальный эндпоинт для бронирования кортов
+            val bookingRequest = BookingRequest(
+                account_id = accountId!!,
+                booking_date = date
+            )
+
             val response: HttpResponse = client.post("$baseUrl/amenities/registration") {
                 contentType(ContentType.Application.Json)
                 header("accept", "application/json, text/plain, */*")
@@ -127,23 +162,16 @@ class CourtAPI {
                 header("origin", "https://www.damacliving.com")
                 header("referer", "https://www.damacliving.com/")
                 header("x-custom-identifier", customIdentifier)
-                setBody(mapOf(
-                    "date" to date,
-                    "time" to time
-                    // TODO: Добавьте другие необходимые параметры:
-                    // "amenity_id" to amenityId,
-                    // "duration" to duration,
-                    // и т.д.
-                ))
+                setBody(bookingRequest)
             }
 
             when {
                 response.status.isSuccess() -> {
-                    logger.info("Booking successful for $date at $time")
+                    logger.info("Booking successful for $date")
                     BookingResult.Success("Court booked successfully")
                 }
                 response.status == HttpStatusCode.Conflict -> {
-                    logger.warn("Court already booked for $date at $time")
+                    logger.warn("Court already booked for $date")
                     BookingResult.AlreadyBooked("Court already booked")
                 }
                 else -> {

@@ -6,11 +6,9 @@ import org.dageev.court.BookingResult
 import org.dageev.court.CourtAPI
 import org.dageev.database.models.Booking
 import org.dageev.database.models.Bookings
-import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.time.*
-import java.time.format.DateTimeFormatter
 
 class BookingScheduler(
     private val telegramBot: TelegramBot,
@@ -20,31 +18,22 @@ class BookingScheduler(
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     /**
-     * Запускает ежедневный планировщик
-     * Каждый день в 23:57 загружает все бронирования на завтра и выполняет их в полночь
+     * Запускает планировщик бронирований
+     * Проверяет каждые 5 минут, есть ли бронирования, которые нужно выполнить
      */
     fun start() {
         logger.info("Starting booking scheduler...")
 
         scope.launch {
             while (isActive) {
-                val now = LocalDateTime.now()
-                val targetTime = now.toLocalDate().atTime(23, 57, 0)
-
-                // Если уже прошло 23:57, планируем на завтра
-                val nextRun = if (now.isAfter(targetTime)) {
-                    targetTime.plusDays(1)
-                } else {
-                    targetTime
+                try {
+                    processAllPendingBookings()
+                } catch (e: Exception) {
+                    logger.error("Error processing bookings", e)
                 }
 
-                val delayMs = Duration.between(now, nextRun).toMillis()
-                logger.info("Next scheduler run at: $nextRun (in ${delayMs / 1000} seconds)")
-
-                delay(delayMs)
-
-                // Запускаем процесс бронирования
-                runBookingProcess()
+                // Проверяем каждые 5 минут
+                delay(5 * 60 * 1000L)
             }
         }
 
@@ -52,54 +41,66 @@ class BookingScheduler(
     }
 
     /**
-     * Процесс бронирования:
-     * 1. Загружает все бронирования на завтра
-     * 2. Ждет до полуночи
-     * 3. Выполняет все бронирования
+     * Обрабатывает все pending бронирования
+     * Логика:
+     * - Если до даты корта меньше 2 дней - выполняем сразу
+     * - Если 2 дня или больше - выполняем в полночь за 2 дня до даты корта
      */
-    private suspend fun runBookingProcess() {
-        logger.info("Starting booking process...")
+    private suspend fun processAllPendingBookings() {
+        val now = LocalDateTime.now()
+        val today = now.toLocalDate()
 
-        try {
-            // Получаем дату завтрашнего дня
-            val tomorrow = LocalDate.now().plusDays(1)
-            val tomorrowStr = tomorrow.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        // Загружаем все pending бронирования
+        val allBookings = transaction {
+            Booking.find { Bookings.status eq "pending" }.toList()
+        }
 
-            // Загружаем все бронирования на завтра
-            val bookings = transaction {
-                Booking.find {
-                    (Bookings.courtDate eq tomorrowStr) and (Bookings.status eq "pending")
-                }.toList()
-            }
+        if (allBookings.isEmpty()) {
+            return
+        }
 
-            if (bookings.isEmpty()) {
-                logger.info("No bookings scheduled for tomorrow ($tomorrowStr)")
-                return
-            }
+        logger.info("Checking ${allBookings.size} pending booking(s)")
 
-            logger.info("Found ${bookings.size} booking(s) for tomorrow ($tomorrowStr)")
+        allBookings.forEach { booking ->
+            val courtDate = LocalDate.parse(booking.courtDate)
+            val daysDiff = Duration.between(today.atStartOfDay(), courtDate.atStartOfDay()).toDays()
 
-            // Ждем до полуночи
-            waitUntilMidnight()
-
-            // Авторизуемся заранее
-            val authSuccess = courtAPI.authenticate()
-            if (!authSuccess) {
-                logger.error("Authentication failed, cannot proceed with bookings")
-                bookings.forEach { booking ->
-                    updateBookingStatus(booking.id.value, "failed", "Authentication failed")
-                    notifyUser(booking.userId, "Не удалось авторизоваться. Бронирование #${booking.id.value} не выполнено.")
+            when {
+                // Если до даты корта меньше 2 дней - выполняем сразу
+                daysDiff < 2 -> {
+                    logger.info("Booking #${booking.id.value} for $courtDate is less than 2 days away (${daysDiff} days) - executing immediately")
+                    executeBookings(listOf(booking))
                 }
-                return
+                // Если ровно 2 дня и уже после 23:57 - ждем полуночи
+                daysDiff == 2L && now.hour >= 23 && now.minute >= 57 -> {
+                    logger.info("Booking #${booking.id.value} for $courtDate is exactly 2 days away - waiting until midnight")
+                    waitUntilMidnight()
+                    executeBookings(listOf(booking))
+                }
             }
+        }
+    }
 
-            // Выполняем все бронирования
+    /**
+     * Выполняет группу бронирований
+     */
+    private suspend fun executeBookings(bookings: List<Booking>) {
+        logger.info("Executing ${bookings.size} booking(s)")
+
+        // Авторизуемся заранее
+        val authSuccess = courtAPI.authenticate()
+        if (!authSuccess) {
+            logger.error("Authentication failed, cannot proceed with bookings")
             bookings.forEach { booking ->
-                processBooking(booking)
+                updateBookingStatus(booking.id.value, "failed", "Authentication failed")
+                notifyUser(booking.userId, "Не удалось авторизоваться. Бронирование #${booking.id.value} не выполнено.")
             }
+            return
+        }
 
-        } catch (e: Exception) {
-            logger.error("Error in booking process", e)
+        // Выполняем все бронирования
+        bookings.forEach { booking ->
+            processBooking(booking)
         }
     }
 
@@ -120,10 +121,10 @@ class BookingScheduler(
      * Обрабатывает одно бронирование
      */
     private suspend fun processBooking(booking: Booking) {
-        logger.info("Processing booking #${booking.id.value}: date=${booking.courtDate}, time=${booking.courtTime}")
+        logger.info("Processing booking #${booking.id.value}: date=${booking.courtDate}")
 
         try {
-            val result = courtAPI.bookCourt(booking.courtDate, booking.courtTime)
+            val result = courtAPI.bookCourt(booking.courtDate)
 
             when (result) {
                 is BookingResult.Success -> {
@@ -131,7 +132,7 @@ class BookingScheduler(
                     updateBookingStatus(booking.id.value, "completed", result.message)
                     notifyUser(
                         booking.userId,
-                        "Бронирование успешно!\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nВремя: ${booking.courtTime}"
+                        "Бронирование успешно!\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}"
                     )
                 }
 
@@ -140,7 +141,7 @@ class BookingScheduler(
                     updateBookingStatus(booking.id.value, "failed", result.message)
                     notifyUser(
                         booking.userId,
-                        "К сожалению, корт уже забронирован.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nВремя: ${booking.courtTime}"
+                        "К сожалению, корт уже забронирован.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}"
                     )
                 }
 
@@ -149,7 +150,7 @@ class BookingScheduler(
                     updateBookingStatus(booking.id.value, "failed", result.message)
                     notifyUser(
                         booking.userId,
-                        "Ошибка при бронировании.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nВремя: ${booking.courtTime}\nОшибка: ${result.message}"
+                        "Ошибка при бронировании.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nОшибка: ${result.message}"
                     )
                 }
             }
