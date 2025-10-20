@@ -8,9 +8,7 @@ import org.dageev.database.models.Booking
 import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
-import java.time.Duration
-import java.time.LocalDate
-import java.time.LocalDateTime
+import java.time.*
 
 class BookingScheduler(
     private val telegramBot: TelegramBot,
@@ -18,6 +16,7 @@ class BookingScheduler(
 ) {
     private val logger = LoggerFactory.getLogger(BookingScheduler::class.java)
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val dubaiZone = ZoneId.of("Asia/Dubai") // UTC+4
 
     /**
      * Запускает планировщик бронирований
@@ -51,8 +50,9 @@ class BookingScheduler(
      * - Если больше 2 дней - ничего не делаем (ждем следующей проверки)
      */
     private suspend fun processAllPendingBookings() {
-        val now = LocalDateTime.now()
-        val today = now.toLocalDate()
+        // Используем время Dubai (UTC+4)
+        val nowDubai = ZonedDateTime.now(dubaiZone)
+        val today = nowDubai.toLocalDate()
 
         // Загружаем все pending бронирования
         val allBookings = transaction {
@@ -63,7 +63,7 @@ class BookingScheduler(
             return
         }
 
-        logger.info("Checking ${allBookings.size} pending booking(s)")
+        logger.info("Checking ${allBookings.size} pending booking(s) at Dubai time: ${nowDubai.toLocalTime()}")
 
         allBookings.forEach { booking ->
             val courtDate = LocalDate.parse(booking.courtDate)
@@ -75,9 +75,10 @@ class BookingScheduler(
                     logger.info("Booking #${booking.id.value} for $courtDate is less than 2 days away (${daysDiff} days) - executing immediately")
                     executeBookings(listOf(booking))
                 }
-                // Если ровно 2 дня и уже после 23:57 - ждем полуночи
-                daysDiff == 3L && now.hour >= 23 && now.minute >= 57 -> {
-                    logger.info("Booking #${booking.id.value} for $courtDate is exactly 2 days away - waiting until midnight")
+                // Если ровно 3 дня и уже после 23:57 (по времени Dubai) - ждем полуночи
+                daysDiff == 3L && nowDubai.hour >= 23 && nowDubai.minute >= 57 -> {
+                    logger.info("Booking #${booking.id.value} for $courtDate is exactly 3 days away and it's after 23:57 Dubai time - waiting until midnight")
+                    notifyUser(booking.userId, "До даты бронирование 3 дня. Сделаем бронирование #${booking.id.value} через несколько минут.")
                     waitUntilMidnight()
                     executeBookings(listOf(booking))
                 }
@@ -109,16 +110,16 @@ class BookingScheduler(
     }
 
     /**
-     * Ждет до полуночи с точностью до миллисекунд
+     * Ждет до полуночи по времени Dubai с точностью до миллисекунд
      */
     private suspend fun waitUntilMidnight() {
-        val now = LocalDateTime.now()
-        val midnight = now.toLocalDate().plusDays(1).atStartOfDay()
-        val delayMs = Duration.between(now, midnight).toMillis()
+        val nowDubai = ZonedDateTime.now(dubaiZone)
+        val midnightDubai = nowDubai.toLocalDate().plusDays(1).atStartOfDay(dubaiZone)
+        val delayMs = Duration.between(nowDubai, midnightDubai).toMillis()
 
-        logger.info("Waiting until midnight (${delayMs}ms)...")
+        logger.info("Waiting until midnight Dubai time (${delayMs}ms)... Current time: ${nowDubai.toLocalTime()}")
         delay(delayMs)
-        logger.info("It's midnight! Starting bookings...")
+        logger.info("It's midnight in Dubai! Starting bookings...")
     }
 
     /**
