@@ -25,7 +25,7 @@ fun main() {
 
         // Создаем экземпляры компонентов
         val courtAPI = CourtAPI()
-        val telegramBot = TelegramBot(botToken)
+        val telegramBot = TelegramBot(botToken, courtAPI)
         val scheduler = BookingScheduler(telegramBot, courtAPI)
 
         // Запускаем Telegram бота

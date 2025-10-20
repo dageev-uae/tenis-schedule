@@ -73,18 +73,23 @@ The bot requires these environment variables (see `.env.example`):
 2. **TelegramBot** (`org.dageev.bot.TelegramBot`)
    - Handles Telegram commands: `/start`, `/schedule`, `/list`, `/cancel`
    - Validates date (YYYY-MM-DD) format - time is not required
-   - Creates bookings in database with status "pending"
-   - Location: `src/main/kotlin/org/dageev/bot/TelegramBot.kt:15`
+   - **Smart booking logic:**
+     - If booking date is ≤2 days away → executes immediately via CourtAPI (no DB write to avoid race conditions)
+     - If booking date is >2 days away → creates booking in database with status "pending" for scheduler
+   - Uses Dubai timezone (UTC+4) for all date calculations
+   - Location: `src/main/kotlin/org/dageev/bot/TelegramBot.kt:18`
 
 3. **BookingScheduler** (`org.dageev.scheduler.BookingScheduler`)
    - Checks every 5 minutes for pending bookings
+   - **Uses Dubai timezone (UTC+4)** for all time checks
    - **Execution logic**:
-     - If court date is **less than 2 days away** → executes immediately
-     - If court date is **exactly 2 days away** and time >= 23:57 → waits until midnight and executes
-   - Examples (today = Oct 20):
-     - Court date Oct 22 (2 days) → executes immediately if found before 23:57, at midnight if after 23:57
+     - If court date is **≤ 2 days away** → executes immediately
+     - If court date is **exactly 3 days away** and Dubai time >= 23:57 → waits until midnight (Dubai) and executes
+   - Examples (today = Oct 20, Dubai time):
+     - Court date Oct 22 (2 days) → executes immediately
      - Court date Oct 21 (1 day) → executes immediately
-     - Court date Oct 23 (3 days) → waits until midnight Oct 20→21
+     - Court date Oct 23 (3 days) at 23:58 Dubai time → waits until midnight and executes
+     - Court date Oct 23 (3 days) at 14:00 Dubai time → does nothing (waits for next check)
    - Updates booking status ("completed" or "failed") and notifies users via Telegram
    - Location: `src/main/kotlin/org/dageev/scheduler/BookingScheduler.kt:15`
 
@@ -116,15 +121,22 @@ The bot requires these environment variables (see `.env.example`):
 **Scheduling a Booking**:
 1. User sends `/schedule 2025-10-25` to Telegram bot (only date required)
 2. Bot validates date format (YYYY-MM-DD) in `TelegramBot.kt:67`
-3. Creates new Booking record with status="pending" and empty courtTime in `TelegramBot.kt:77`
-4. Bot confirms scheduling to user
+3. Bot calculates days difference using Dubai timezone in `TelegramBot.kt:80-83`
+4. **Two paths:**
+   - **≤2 days away**: Immediately authenticates and books via CourtAPI (no DB write) in `TelegramBot.kt:85-124`
+     - Sends "Начинаю бронирование..." message
+     - Executes booking synchronously using `runBlocking`
+     - Sends result (success/already booked/error) immediately
+     - No race conditions possible since not using scheduler
+   - **>2 days away**: Creates new Booking record with status="pending" in `TelegramBot.kt:128-137`
+     - Saved for scheduler to process at midnight
 
-**Executing Bookings**:
+**Executing Scheduled Bookings** (only for >2 days bookings):
 1. Scheduler checks every 5 minutes for pending bookings in `BookingScheduler.kt:32`
-2. Calculates days difference between today and court date in `BookingScheduler.kt:66`
-3. If difference < 2 days, executes immediately in `BookingScheduler.kt:70-73`
-4. If difference == 2 days and time >= 23:57, waits until midnight in `BookingScheduler.kt:75-79`
-5. Authenticates with API to get `access_token` and `account_id` at `BookingScheduler.kt:90`
+2. Calculates days difference between today and court date in `BookingScheduler.kt:70`
+3. If difference ≤ 2 days, executes immediately in `BookingScheduler.kt:74-76`
+4. If difference == 3 days and Dubai time >= 23:57, waits until midnight in `BookingScheduler.kt:79-83`
+5. Authenticates with API to get `access_token` and `account_id` at `BookingScheduler.kt:96`
 6. Processes each booking via `processBooking()` which calls `CourtAPI.bookCourt(date)`
 7. Updates booking status and notifies user
 
@@ -149,8 +161,13 @@ The project is configured for Railway deployment with Supabase PostgreSQL. See `
 
 ## Important Implementation Notes
 
-- **Timing Precision**: The scheduler calculates millisecond-precise delays to ensure bookings happen exactly at midnight (see `BookingScheduler.kt:109-117`)
-- **Coroutines**: Scheduler uses `kotlinx.coroutines` with `SupervisorJob` to prevent failures from crashing the scheduler
+- **Immediate vs Scheduled Booking**:
+  - Bookings ≤2 days away execute immediately in TelegramBot (synchronous, no DB write, no race conditions)
+  - Bookings >2 days away are saved to DB and processed by scheduler at midnight
+- **Dubai Timezone**: Both TelegramBot and BookingScheduler use Asia/Dubai timezone (UTC+4) for all time checks and midnight calculations to match the court booking system's timezone
+- **Race Condition Prevention**: Immediate bookings (≤2 days) bypass the database entirely, avoiding potential race conditions with the scheduler
+- **Timing Precision**: The scheduler calculates millisecond-precise delays to ensure bookings happen exactly at midnight Dubai time (see `BookingScheduler.kt:115-123`)
+- **Coroutines**: Scheduler uses `kotlinx.coroutines` with `SupervisorJob` to prevent failures from crashing the scheduler. TelegramBot uses `runBlocking` for immediate bookings to execute synchronously.
 - **Authentication**: CourtAPI caches `access_token` and `account_id` in memory; re-authenticates if either is missing
 - **API Integration**:
   - Authentication response has nested JSON structure: `data.party.access_token` and `data.party.account_id`

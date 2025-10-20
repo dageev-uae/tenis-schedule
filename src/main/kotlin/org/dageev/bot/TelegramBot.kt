@@ -5,16 +5,20 @@ import com.github.kotlintelegrambot.bot
 import com.github.kotlintelegrambot.dispatch
 import com.github.kotlintelegrambot.dispatcher.command
 import com.github.kotlintelegrambot.entities.ChatId
+import kotlinx.coroutines.runBlocking
+import org.dageev.court.BookingResult
+import org.dageev.court.CourtAPI
 import org.dageev.database.models.Booking
 import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
-import java.time.LocalDateTime
+import java.time.*
 import java.time.format.DateTimeFormatter
 
-class TelegramBot(private val token: String) {
+class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
     private val logger = LoggerFactory.getLogger(TelegramBot::class.java)
     private lateinit var bot: Bot
+    private val dubaiZone = ZoneId.of("Asia/Dubai") // UTC+4
 
     fun start() {
         logger.info("Starting Telegram bot...")
@@ -73,23 +77,73 @@ class TelegramBot(private val token: String) {
                     }
 
                     try {
-                        val bookingId = transaction {
-                            val booking = Booking.new {
-                                this.userId = userId
-                                this.courtDate = date
-                                this.courtTime = ""  // Время не используется
-                                this.createdAt = LocalDateTime.now()
-                                this.status = "pending"
+                        // Вычисляем разницу дней до бронирования (по времени Dubai)
+                        val todayDubai = ZonedDateTime.now(dubaiZone).toLocalDate()
+                        val courtDate = LocalDate.parse(date)
+                        val daysDiff = Duration.between(todayDubai.atStartOfDay(), courtDate.atStartOfDay()).toDays()
+
+                        if (daysDiff <= 2) {
+                            // Бронируем сразу, без записи в БД (избегаем гонки со scheduler)
+                            logger.info("Immediate booking: userId=$userId, date=$date, daysDiff=$daysDiff")
+
+                            bot.sendMessage(
+                                chatId = ChatId.fromId(message.chat.id),
+                                text = "Начинаю бронирование...\n\nДата: $date"
+                            )
+
+                            // Выполняем бронирование
+                            val result = runBlocking {
+                                // Авторизуемся
+                                val authSuccess = courtAPI.authenticate()
+                                if (!authSuccess) {
+                                    return@runBlocking BookingResult.Error("Не удалось авторизоваться")
+                                }
+
+                                // Бронируем корт
+                                courtAPI.bookCourt(date)
                             }
-                            booking.id.value
+
+                            val responseMessage = when (result) {
+                                is BookingResult.Success -> {
+                                    logger.info("Immediate booking successful: userId=$userId, date=$date")
+                                    "✅ Бронирование успешно!\n\nДата: $date\n\n${result.message}"
+                                }
+                                is BookingResult.AlreadyBooked -> {
+                                    logger.warn("Immediate booking - court already booked: userId=$userId, date=$date")
+                                    "⚠️ К сожалению, корт уже забронирован.\n\nДата: $date\n\n${result.message}"
+                                }
+                                is BookingResult.Error -> {
+                                    logger.error("Immediate booking failed: userId=$userId, date=$date, error=${result.message}")
+                                    "❌ Ошибка при бронировании.\n\nДата: $date\n\nОшибка: ${result.message}"
+                                }
+                            }
+
+                            bot.sendMessage(
+                                chatId = ChatId.fromId(message.chat.id),
+                                text = responseMessage
+                            )
+
+                        } else {
+                            // Сохраняем в БД для отложенного бронирования через scheduler
+                            val bookingId = transaction {
+                                val booking = Booking.new {
+                                    this.userId = userId
+                                    this.courtDate = date
+                                    this.courtTime = ""  // Время не используется
+                                    this.createdAt = LocalDateTime.now()
+                                    this.status = "pending"
+                                }
+                                booking.id.value
+                            }
+
+                            bot.sendMessage(
+                                chatId = ChatId.fromId(message.chat.id),
+                                text = "Бронирование запланировано!\n\nID: $bookingId\nДата: $date\n\nБронирование будет выполнено автоматически в полночь (по времени Dubai)."
+                            )
+
+                            logger.info("Booking scheduled: userId=$userId, date=$date, bookingId=$bookingId, daysDiff=$daysDiff")
                         }
 
-                        bot.sendMessage(
-                            chatId = ChatId.fromId(message.chat.id),
-                            text = "Бронирование запланировано!\n\nID: $bookingId\nДата: $date\n\nБронирование будет выполнено автоматически в полночь."
-                        )
-
-                        logger.info("Booking scheduled: userId=$userId, date=$date, bookingId=$bookingId")
                     } catch (e: Exception) {
                         logger.error("Error scheduling booking", e)
                         bot.sendMessage(
