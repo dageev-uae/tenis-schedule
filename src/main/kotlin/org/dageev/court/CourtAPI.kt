@@ -266,6 +266,9 @@ class CourtAPI {
                 setBody(bookingRequest)
             }
 
+            val responseBody = readResponseBody(response)
+            logger.info("Booking response status: ${response.status.value}, body: $responseBody")
+
             when {
                 response.status.isSuccess() -> {
                     logger.info("Booking successful for $date")
@@ -278,8 +281,7 @@ class CourtAPI {
                 }
 
                 else -> {
-                    // Не читаем тело ответа при ошибке, так как может быть проблема с кодировкой
-                    logger.error("Booking failed with status: ${response.status.value} ${response.status.description}")
+                    logger.error("Booking failed with status: ${response.status.value} ${response.status.description}, body: $responseBody")
                     BookingResult.Error("Booking failed with status: ${response.status.value}")
                 }
             }
