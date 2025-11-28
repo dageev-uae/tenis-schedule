@@ -68,6 +68,11 @@ data class MetaData(
     val status_code: Int? = null
 )
 
+@Serializable
+data class BookingResponse(
+    val meta_data: MetaData? = null
+)
+
 class CourtAPI {
     private val logger = LoggerFactory.getLogger(CourtAPI::class.java)
 
@@ -271,8 +276,29 @@ class CourtAPI {
 
             when {
                 response.status.isSuccess() -> {
-                    logger.info("Booking successful for $date")
-                    BookingResult.Success("Court booked successfully")
+                    // Парсим ответ для проверки meta_data
+                    val json = Json { ignoreUnknownKeys = true }
+                    val bookingResponse = try {
+                        json.decodeFromString<BookingResponse>(responseBody)
+                    } catch (e: Exception) {
+                        logger.warn("Failed to parse booking response: ${e.message}")
+                        null
+                    }
+
+                    // Проверяем, не вернул ли API ошибку в meta_data при статусе 200
+                    if (bookingResponse?.meta_data?.title == "Failure") {
+                        val message = bookingResponse.meta_data.message ?: "Booking failed"
+                        if (message.contains("already booked", ignoreCase = true)) {
+                            logger.warn("Court already booked for $date: $message")
+                            BookingResult.AlreadyBooked(message)
+                        } else {
+                            logger.error("Booking failed for $date: $message")
+                            BookingResult.Error(message)
+                        }
+                    } else {
+                        logger.info("Booking successful for $date")
+                        BookingResult.Success("Court booked successfully")
+                    }
                 }
 
                 response.status == HttpStatusCode.Conflict -> {
