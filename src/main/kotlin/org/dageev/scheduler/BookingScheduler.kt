@@ -63,15 +63,19 @@ class BookingScheduler(
                 val authSuccess = courtAPI.authenticate()
                 if (!authSuccess) {
                     logger.error("Authentication failed, cannot fetch slots")
+                    notifyAdmin("Ошибка при загрузке слотов на $targetDate: не удалось авторизоваться")
                     return@launch
                 }
 
                 // Fetch слотов для обоих кортов
                 var totalSaved = 0
+                val slotsByCourt = mutableMapOf<Int, MutableList<String>>()
+
                 for ((courtNumber, amenityId) in courtAPI.courtMapping) {
                     val slots = courtAPI.fetchSlots(targetDate, amenityId)
                     logger.info("Court $courtNumber: fetched ${slots.size} slots")
 
+                    val courtSlots = mutableListOf<String>()
                     transaction {
                         for (slot in slots) {
                             val normalizedStartTime = normalizeTime(slot.start_time)
@@ -89,16 +93,22 @@ class BookingScheduler(
                             } else {
                                 logger.info("Slot ${slot.id} already exists, skipping")
                             }
+                            courtSlots.add("$normalizedStartTime-$normalizedEndTime")
                         }
                     }
+                    slotsByCourt[courtNumber] = courtSlots
                 }
 
                 logger.info("Slot fetch completed: saved $totalSaved new slots for $targetDate")
                 slotFetchComplete = true
 
+                // Уведомляем админа о загруженных слотах
+                notifySlotsFetched(targetDate, slotsByCourt, totalSaved)
+
             } catch (e: Exception) {
                 logger.error("Error during slot fetch", e)
                 slotFetchComplete = true // Помечаем как завершённый, чтобы не блокировать бронирования навечно
+                notifyAdmin("Ошибка при загрузке слотов на $targetDate: ${e.message}")
             }
         }
     }
@@ -303,6 +313,38 @@ class BookingScheduler(
         } catch (e: Exception) {
             logger.error("Failed to notify user $userId", e)
         }
+    }
+
+    /**
+     * Отправляет сообщение админу (chatId из /sendme)
+     */
+    private fun notifyAdmin(message: String) {
+        val chatId = telegramBot.adminChatId ?: return
+        notifyUser(chatId, message)
+    }
+
+    /**
+     * Формирует и отправляет сообщение о загруженных слотах
+     */
+    private fun notifySlotsFetched(targetDate: String, slotsByCourt: Map<Int, List<String>>, totalSaved: Int) {
+        val chatId = telegramBot.adminChatId ?: return
+
+        val message = buildString {
+            appendLine("Слоты загружены на $targetDate:")
+            appendLine()
+            for ((courtNumber, slots) in slotsByCourt.toSortedMap()) {
+                appendLine("Корт $courtNumber:")
+                if (slots.isEmpty()) {
+                    appendLine("  нет слотов")
+                } else {
+                    slots.forEach { appendLine("  $it") }
+                }
+                appendLine()
+            }
+            append("Всего сохранено: $totalSaved новых слотов")
+        }
+
+        notifyUser(chatId, message)
     }
 
     /**

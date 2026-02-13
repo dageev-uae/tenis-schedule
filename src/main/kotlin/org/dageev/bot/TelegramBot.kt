@@ -23,6 +23,10 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
     private lateinit var bot: Bot
     private val dubaiZone = ZoneId.of("Asia/Dubai") // UTC+4
 
+    @Volatile
+    var adminChatId: Long? = null
+        private set
+
     fun start() {
         logger.info("Starting Telegram bot...")
 
@@ -44,6 +48,7 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                           Пример: /schedule 2025-10-25 06:00 3
                         /list - показать все запланированные бронирования
                         /cancel <id> - отменить бронирование
+                        /sendme - подписаться на уведомления о слотах
                         /test_auth - проверить подключение к системе бронирования
 
                         Корты: 3 или 4
@@ -287,6 +292,17 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                             text = "Произошла ошибка при отмене бронирования: ${e.message}"
                         )
                     }
+                }
+
+                command("sendme") {
+                    val chatId = message.chat.id
+                    adminChatId = chatId
+                    logger.info("Admin chat ID saved: $chatId")
+
+                    bot.sendMessage(
+                        chatId = ChatId.fromId(chatId),
+                        text = "Сохранил! Буду отправлять сюда уведомления о загруженных слотах после полуночи."
+                    )
                 }
 
                 command("test_auth") {
