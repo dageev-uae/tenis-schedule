@@ -54,6 +54,18 @@ application {
 
 tasks.test {
     useJUnitPlatform()
+    // Загружаем .env файл в окружение тестов (кроме DATABASE_URL — тесты используют SQLite)
+    val envFile = file(".env")
+    if (envFile.exists()) {
+        envFile.readLines()
+            .filter { it.isNotBlank() && !it.startsWith("#") && "=" in it }
+            .forEach { line ->
+                val (key, value) = line.split("=", limit = 2)
+                if (key.trim() != "DATABASE_URL") {
+                    environment(key.trim(), value.trim())
+                }
+            }
+    }
 }
 
 kotlin {

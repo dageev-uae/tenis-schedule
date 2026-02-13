@@ -8,8 +8,11 @@ import com.github.kotlintelegrambot.entities.ChatId
 import kotlinx.coroutines.runBlocking
 import org.dageev.court.BookingResult
 import org.dageev.court.CourtAPI
+import org.dageev.database.models.AmenitySlot
+import org.dageev.database.models.AmenitySlots
 import org.dageev.database.models.Booking
 import org.dageev.database.models.Bookings
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.time.*
@@ -37,12 +40,13 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                         Я бот для автоматического бронирования теннисных кортов.
 
                         Доступные команды:
-                        /schedule <дата> - запланировать бронирование
-                          Пример: /schedule 2025-10-25
+                        /schedule <дата> <время> <корт> - запланировать бронирование
+                          Пример: /schedule 2025-10-25 06:00 3
                         /list - показать все запланированные бронирования
                         /cancel <id> - отменить бронирование
                         /test_auth - проверить подключение к системе бронирования
 
+                        Корты: 3 или 4
                         Бронирование будет выполнено автоматически ровно в полночь!
                     """.trimIndent()
 
@@ -58,21 +62,58 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                     val userId = message.from?.id ?: return@command
                     val args = args
 
-                    if (args.isEmpty()) {
+                    if (args.size < 3) {
                         bot.sendMessage(
                             chatId = ChatId.fromId(message.chat.id),
-                            text = "Неверный формат. Используйте: /schedule YYYY-MM-DD\nПример: /schedule 2025-10-25"
+                            text = "Неверный формат. Используйте: /schedule YYYY-MM-DD HH:MM КОРТ\nПример: /schedule 2025-10-25 06:00 3"
                         )
                         return@command
                     }
 
                     val date = args[0]
+                    val time = args[1]
+                    val courtNumberArg = args[2].toIntOrNull()
 
                     // Валидация формата даты
                     if (!isValidDate(date)) {
                         bot.sendMessage(
                             chatId = ChatId.fromId(message.chat.id),
                             text = "Неверный формат даты. Используйте YYYY-MM-DD"
+                        )
+                        return@command
+                    }
+
+                    // Валидация формата времени
+                    if (!isValidTime(time)) {
+                        bot.sendMessage(
+                            chatId = ChatId.fromId(message.chat.id),
+                            text = "Неверный формат времени. Используйте HH:MM (например, 06:00)"
+                        )
+                        return@command
+                    }
+
+                    // Валидация номера корта
+                    if (courtNumberArg == null || courtNumberArg !in courtAPI.courtMapping) {
+                        bot.sendMessage(
+                            chatId = ChatId.fromId(message.chat.id),
+                            text = "Неверный номер корта. Доступные корты: ${courtAPI.courtMapping.keys.joinToString(", ")}"
+                        )
+                        return@command
+                    }
+
+                    val amenityId = courtAPI.courtMapping[courtNumberArg]!!
+
+                    // Ищем slot_id в БД
+                    val slotId = transaction {
+                        AmenitySlot.find {
+                            (AmenitySlots.amenityId eq amenityId) and (AmenitySlots.startTime eq time)
+                        }.firstOrNull()?.id?.value
+                    }
+
+                    if (slotId == null) {
+                        bot.sendMessage(
+                            chatId = ChatId.fromId(message.chat.id),
+                            text = "Слот на время $time для корта $courtNumberArg не найден в базе. Возможно, слоты ещё не загружены."
                         )
                         return@command
                     }
@@ -85,11 +126,11 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
 
                         if (daysDiff <= 2) {
                             // Бронируем сразу, без записи в БД (избегаем гонки со scheduler)
-                            logger.info("Immediate booking: userId=$userId, date=$date, daysDiff=$daysDiff")
+                            logger.info("Immediate booking: userId=$userId, date=$date, time=$time, court=$courtNumberArg, daysDiff=$daysDiff")
 
                             bot.sendMessage(
                                 chatId = ChatId.fromId(message.chat.id),
-                                text = "Начинаю бронирование...\n\nДата: $date"
+                                text = "Начинаю бронирование...\n\nДата: $date\nВремя: $time\nКорт: $courtNumberArg"
                             )
 
                             // Выполняем бронирование
@@ -101,21 +142,21 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                                 }
 
                                 // Бронируем корт
-                                courtAPI.bookCourt(date)
+                                courtAPI.bookCourt(date, slotId, amenityId)
                             }
 
                             val responseMessage = when (result) {
                                 is BookingResult.Success -> {
-                                    logger.info("Immediate booking successful: userId=$userId, date=$date")
-                                    "✅ Бронирование успешно!\n\nДата: $date\n\n${result.message}"
+                                    logger.info("Immediate booking successful: userId=$userId, date=$date, time=$time, court=$courtNumberArg")
+                                    "✅ Бронирование успешно!\n\nДата: $date\nВремя: $time\nКорт: $courtNumberArg\n\n${result.message}"
                                 }
                                 is BookingResult.AlreadyBooked -> {
                                     logger.warn("Immediate booking - court already booked: userId=$userId, date=$date")
-                                    "⚠️ К сожалению, корт уже забронирован.\n\nДата: $date\n\n${result.message}"
+                                    "⚠️ К сожалению, корт уже забронирован.\n\nДата: $date\nВремя: $time\nКорт: $courtNumberArg\n\n${result.message}"
                                 }
                                 is BookingResult.Error -> {
                                     logger.error("Immediate booking failed: userId=$userId, date=$date, error=${result.message}")
-                                    "❌ Ошибка при бронировании.\n\nДата: $date\n\nОшибка: ${result.message}"
+                                    "❌ Ошибка при бронировании.\n\nДата: $date\nВремя: $time\nКорт: $courtNumberArg\n\nОшибка: ${result.message}"
                                 }
                             }
 
@@ -130,7 +171,8 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                                 val booking = Booking.new {
                                     this.userId = userId
                                     this.courtDate = date
-                                    this.courtTime = ""  // Время не используется
+                                    this.courtTime = time
+                                    this.courtNumber = courtNumberArg
                                     this.createdAt = LocalDateTime.now()
                                     this.status = "pending"
                                 }
@@ -139,10 +181,10 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
 
                             bot.sendMessage(
                                 chatId = ChatId.fromId(message.chat.id),
-                                text = "Бронирование запланировано!\n\nID: $bookingId\nДата: $date\n\nБронирование будет выполнено автоматически в полночь (по времени Dubai)."
+                                text = "Бронирование запланировано!\n\nID: $bookingId\nДата: $date\nВремя: $time\nКорт: $courtNumberArg\n\nБронирование будет выполнено автоматически в полночь (по времени Dubai)."
                             )
 
-                            logger.info("Booking scheduled: userId=$userId, date=$date, bookingId=$bookingId, daysDiff=$daysDiff")
+                            logger.info("Booking scheduled: userId=$userId, date=$date, time=$time, court=$courtNumberArg, bookingId=$bookingId, daysDiff=$daysDiff")
                         }
 
                     } catch (e: Exception) {
@@ -173,6 +215,8 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
                             val bookingsList = bookings.joinToString("\n\n") { booking ->
                                 "ID: ${booking.id.value}\n" +
                                         "Дата: ${booking.courtDate}\n" +
+                                        "Время: ${booking.courtTime}\n" +
+                                        "Корт: ${booking.courtNumber}\n" +
                                         "Статус: ${booking.status}"
                             }
 
@@ -293,6 +337,16 @@ class TelegramBot(private val token: String, private val courtAPI: CourtAPI) {
         return try {
             val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
             java.time.LocalDate.parse(date, formatter)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isValidTime(time: String): Boolean {
+        return try {
+            val formatter = DateTimeFormatter.ofPattern("HH:mm")
+            java.time.LocalTime.parse(time, formatter)
             true
         } catch (e: Exception) {
             false

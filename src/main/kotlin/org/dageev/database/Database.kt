@@ -2,6 +2,7 @@ package org.dageev.database
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import org.dageev.database.models.AmenitySlots
 import org.dageev.database.models.Bookings
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.DatabaseConfig
@@ -78,7 +79,7 @@ object DatabaseFactory {
         }
 
         transaction {
-            SchemaUtils.create(Bookings)
+            SchemaUtils.createMissingTablesAndColumns(Bookings, AmenitySlots)
             logger.info("Database schema created successfully")
         }
     }

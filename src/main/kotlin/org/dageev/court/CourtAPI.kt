@@ -73,6 +73,24 @@ data class BookingResponse(
     val meta_data: MetaData? = null
 )
 
+@Serializable
+data class SlotsResponse(
+    val meta_data: MetaData? = null,
+    val data: SlotsData? = null
+)
+
+@Serializable
+data class SlotsData(
+    val slots: List<SlotInfo> = emptyList()
+)
+
+@Serializable
+data class SlotInfo(
+    val id: String,
+    val start_time: String,
+    val end_time: String
+)
+
 class CourtAPI {
     private val logger = LoggerFactory.getLogger(CourtAPI::class.java)
 
@@ -109,6 +127,13 @@ class CourtAPI {
     private val apiToken = "a740e9a60b62418ee08d65d53740c3346eef6edf994a0784f0def9ca13822a9b"
     private val customIdentifierAuth = "8c619de8da1ac706a66276d3ecdd1054"
     private val customIdentifierBooking = "2f936759a34caa82fb9fc1a809c17c0d"
+    private val customIdentifierSlots = "027f1405a5df7b57b574a96e4168c1f7"
+
+    val courtMapping = mapOf(
+        3 to "a5Y1n000000eVckEAE",  // Court 3
+        4 to "a5Y1n000000eVcpEAE"   // Court 4
+    )
+    private val bookingUnitId = "a0x07000008cCMPAA2"
 
     private val username = System.getenv("COURT_USERNAME")?.trim() ?: ""
     private val password = System.getenv("COURT_PASSWORD")?.trim() ?: ""
@@ -221,13 +246,70 @@ class CourtAPI {
     }
 
     /**
+     * Получение доступных слотов для корта на дату
+     */
+    suspend fun fetchSlots(date: String, amenityId: String): List<SlotInfo> {
+        return try {
+            logger.info("Fetching slots for amenity=$amenityId, date=$date")
+
+            if (accessToken == null || accountId == null) {
+                if (!authenticate()) {
+                    logger.error("Authentication failed, cannot fetch slots")
+                    return emptyList()
+                }
+            }
+
+            val url = "$baseUrl/amenities/$amenityId/units/$bookingUnitId/$date?account-id=$accountId"
+            val response: HttpResponse = client.get(url) {
+                header("accept", "application/json, text/plain, */*")
+                header("accept-language", "en")
+                header("api-token", apiToken)
+                header("authorization", "Bearer $accessToken")
+                header("origin", "https://www.damacliving.com")
+                header("priority", "u=1, i")
+                header("referer", "https://www.damacliving.com/")
+                header("sec-ch-ua", "\"Chromium\";v=\"145\", \"Not:A-Brand\";v=\"99\"")
+                header("sec-ch-ua-mobile", "?0")
+                header("sec-ch-ua-platform", "\"macOS\"")
+                header("sec-fetch-dest", "empty")
+                header("sec-fetch-mode", "cors")
+                header("sec-fetch-site", "cross-site")
+                header(
+                    "user-agent",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                )
+                header("x-custom-identifier", customIdentifierSlots)
+            }
+
+            val responseBody = readResponseBody(response)
+            logger.info("Slots response status: ${response.status.value}, body: $responseBody")
+
+            if (response.status.isSuccess()) {
+                val json = Json { ignoreUnknownKeys = true }
+                val slotsResponse = json.decodeFromString<SlotsResponse>(responseBody)
+                val slots = slotsResponse.data?.slots ?: emptyList()
+                logger.info("Fetched ${slots.size} slots for amenity=$amenityId, date=$date")
+                slots
+            } else {
+                logger.error("Failed to fetch slots: ${response.status.value}")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            logger.error("Error fetching slots", e)
+            emptyList()
+        }
+    }
+
+    /**
      * Бронирование корта
      * @param date Дата в формате YYYY-MM-DD
+     * @param amenitySlotId ID слота (из таблицы AmenitySlots)
+     * @param amenityId ID корта (из courtMapping)
      * @return результат бронирования
      */
-    suspend fun bookCourt(date: String): BookingResult {
+    suspend fun bookCourt(date: String, amenitySlotId: String, amenityId: String): BookingResult {
         return try {
-            logger.info("Attempting to book court for $date")
+            logger.info("Attempting to book court for $date, slot=$amenitySlotId, amenity=$amenityId")
 
             if (accessToken == null || accountId == null) {
                 if (!authenticate()) {
@@ -239,9 +321,9 @@ class CourtAPI {
                 origin = "Portal",
                 fm_case_id = "",
                 account_id = accountId!!,
-                booking_unit_id = "a0x07000008cCMPAA2",
-                amenity_id = "a5Y1n000000eVcpEAE",
-                amenity_slot_id = "a5XTY0000000EpN2AU",
+                booking_unit_id = bookingUnitId,
+                amenity_id = amenityId,
+                amenity_slot_id = amenitySlotId,
                 booking_date = date,
                 no_of_guest = 2,
                 comments = ""

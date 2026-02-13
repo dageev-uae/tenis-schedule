@@ -4,8 +4,11 @@ import kotlinx.coroutines.*
 import org.dageev.bot.TelegramBot
 import org.dageev.court.BookingResult
 import org.dageev.court.CourtAPI
+import org.dageev.database.models.AmenitySlot
+import org.dageev.database.models.AmenitySlots
 import org.dageev.database.models.Booking
 import org.dageev.database.models.Bookings
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.time.*
@@ -17,6 +20,9 @@ class BookingScheduler(
     private val logger = LoggerFactory.getLogger(BookingScheduler::class.java)
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val dubaiZone = ZoneId.of("Asia/Dubai") // UTC+4
+
+    @Volatile
+    private var slotFetchComplete = false
 
     /**
      * Запускает планировщик бронирований
@@ -42,12 +48,77 @@ class BookingScheduler(
     }
 
     /**
+     * Одноразовый fetch слотов в полночь по Дубаю.
+     * Ждёт до полуночи, затем делает запрос на слоты для обоих кортов на указанную дату.
+     */
+    fun scheduleSlotFetch(targetDate: String) {
+        scope.launch {
+            try {
+                logger.info("Scheduling slot fetch for $targetDate at midnight Dubai time")
+                waitUntilMidnight()
+
+                logger.info("Midnight reached! Fetching slots for $targetDate")
+
+                // Авторизуемся
+                val authSuccess = courtAPI.authenticate()
+                if (!authSuccess) {
+                    logger.error("Authentication failed, cannot fetch slots")
+                    return@launch
+                }
+
+                // Fetch слотов для обоих кортов
+                var totalSaved = 0
+                for ((courtNumber, amenityId) in courtAPI.courtMapping) {
+                    val slots = courtAPI.fetchSlots(targetDate, amenityId)
+                    logger.info("Court $courtNumber: fetched ${slots.size} slots")
+
+                    transaction {
+                        for (slot in slots) {
+                            val normalizedStartTime = normalizeTime(slot.start_time)
+                            val normalizedEndTime = normalizeTime(slot.end_time)
+
+                            // Upsert: если слот с таким id уже есть — пропускаем
+                            val existing = AmenitySlot.findById(slot.id)
+                            if (existing == null) {
+                                AmenitySlot.new(slot.id) {
+                                    this.amenityId = amenityId
+                                    this.startTime = normalizedStartTime
+                                    this.endTime = normalizedEndTime
+                                }
+                                totalSaved++
+                            } else {
+                                logger.info("Slot ${slot.id} already exists, skipping")
+                            }
+                        }
+                    }
+                }
+
+                logger.info("Slot fetch completed: saved $totalSaved new slots for $targetDate")
+                slotFetchComplete = true
+
+            } catch (e: Exception) {
+                logger.error("Error during slot fetch", e)
+                slotFetchComplete = true // Помечаем как завершённый, чтобы не блокировать бронирования навечно
+            }
+        }
+    }
+
+    /**
+     * Нормализует время в формат HH:MM (с ведущим нулём)
+     * "6:00" -> "06:00", "06:00" -> "06:00", "6:00:00" -> "06:00"
+     */
+    private fun normalizeTime(time: String): String {
+        val parts = time.split(":")
+        if (parts.size >= 2) {
+            val hour = parts[0].trim().padStart(2, '0')
+            val minute = parts[1].trim().padStart(2, '0')
+            return "$hour:$minute"
+        }
+        return time
+    }
+
+    /**
      * Обрабатывает все pending бронирования
-     * Логика:
-     * - Если до даты корта меньше 2 дней - выполняем сразу
-     * - Если ровно 2 дня и время >= 23:57 - ждем полуночи
-     * - Если ровно 2 дня, но еще не 23:57 - выполняем сразу
-     * - Если больше 2 дней - ничего не делаем (ждем следующей проверки)
      */
     private suspend fun processAllPendingBookings() {
         // Используем время Dubai (UTC+4)
@@ -73,6 +144,8 @@ class BookingScheduler(
                 // Если до даты корта меньше 2 дней - выполняем сразу
                 daysDiff <= 2 -> {
                     logger.info("Booking #${booking.id.value} for $courtDate is less than 2 days away (${daysDiff} days) - executing immediately")
+                    // Ждём завершения slot fetch если он запланирован и ещё не завершён
+                    waitForSlotFetchIfNeeded()
                     executeBookings(listOf(booking))
                 }
                 // Если ровно 3 дня и уже после 23:57 (по времени Dubai) - ждем полуночи
@@ -80,9 +153,30 @@ class BookingScheduler(
                     logger.info("Booking #${booking.id.value} for $courtDate is exactly 3 days away and it's after 23:57 Dubai time - waiting until midnight")
                     notifyUser(booking.userId, "До даты бронирование 3 дня. Сделаем бронирование #${booking.id.value} через несколько минут.")
                     waitUntilMidnight()
+                    // Ждём завершения slot fetch после полуночи
+                    waitForSlotFetchIfNeeded()
                     executeBookings(listOf(booking))
                 }
             }
+        }
+    }
+
+    /**
+     * Ждёт завершения slot fetch (если он был запланирован), максимум 30 секунд
+     */
+    private suspend fun waitForSlotFetchIfNeeded() {
+        if (slotFetchComplete) return
+
+        logger.info("Waiting for slot fetch to complete...")
+        var waited = 0
+        while (!slotFetchComplete && waited < 30000) {
+            delay(500)
+            waited += 500
+        }
+        if (!slotFetchComplete) {
+            logger.warn("Slot fetch did not complete within 30 seconds, proceeding anyway")
+        } else {
+            logger.info("Slot fetch completed, proceeding with bookings")
         }
     }
 
@@ -119,17 +213,37 @@ class BookingScheduler(
 
         logger.info("Waiting until midnight Dubai time (${delayMs}ms)... Current time: ${nowDubai.toLocalTime()}")
         delay(delayMs)
-        logger.info("It's midnight in Dubai! Starting bookings...")
+        logger.info("It's midnight in Dubai! Starting...")
     }
 
     /**
      * Обрабатывает одно бронирование
      */
     private suspend fun processBooking(booking: Booking) {
-        logger.info("Processing booking #${booking.id.value}: date=${booking.courtDate}")
+        logger.info("Processing booking #${booking.id.value}: date=${booking.courtDate}, time=${booking.courtTime}, court=${booking.courtNumber}")
 
         try {
-            val result = courtAPI.bookCourt(booking.courtDate)
+            val amenityId = courtAPI.courtMapping[booking.courtNumber]
+            if (amenityId == null) {
+                updateBookingStatus(booking.id.value, "failed", "Unknown court number: ${booking.courtNumber}")
+                notifyUser(booking.userId, "Неизвестный номер корта: ${booking.courtNumber}. Бронирование #${booking.id.value} не выполнено.")
+                return
+            }
+
+            // Ищем slot_id в БД
+            val slotId = transaction {
+                AmenitySlot.find {
+                    (AmenitySlots.amenityId eq amenityId) and (AmenitySlots.startTime eq booking.courtTime)
+                }.firstOrNull()?.id?.value
+            }
+
+            if (slotId == null) {
+                updateBookingStatus(booking.id.value, "failed", "Slot not found for time=${booking.courtTime}, court=${booking.courtNumber}")
+                notifyUser(booking.userId, "Слот на время ${booking.courtTime} для корта ${booking.courtNumber} не найден. Бронирование #${booking.id.value} не выполнено.")
+                return
+            }
+
+            val result = courtAPI.bookCourt(booking.courtDate, slotId, amenityId)
 
             when (result) {
                 is BookingResult.Success -> {
@@ -137,7 +251,7 @@ class BookingScheduler(
                     updateBookingStatus(booking.id.value, "completed", result.message)
                     notifyUser(
                         booking.userId,
-                        "Бронирование успешно!\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}"
+                        "Бронирование успешно!\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nВремя: ${booking.courtTime}\nКорт: ${booking.courtNumber}"
                     )
                 }
 
@@ -146,7 +260,7 @@ class BookingScheduler(
                     updateBookingStatus(booking.id.value, "failed", result.message)
                     notifyUser(
                         booking.userId,
-                        "К сожалению, корт уже забронирован.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}"
+                        "К сожалению, корт уже забронирован.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nВремя: ${booking.courtTime}\nКорт: ${booking.courtNumber}"
                     )
                 }
 
@@ -155,7 +269,7 @@ class BookingScheduler(
                     updateBookingStatus(booking.id.value, "failed", result.message)
                     notifyUser(
                         booking.userId,
-                        "Ошибка при бронировании.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nОшибка: ${result.message}"
+                        "Ошибка при бронировании.\n\nID: ${booking.id.value}\nДата: ${booking.courtDate}\nВремя: ${booking.courtTime}\nКорт: ${booking.courtNumber}\nОшибка: ${result.message}"
                     )
                 }
             }

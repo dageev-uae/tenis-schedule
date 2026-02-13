@@ -34,6 +34,10 @@ fun main() {
         // Запускаем планировщик
         scheduler.start()
 
+        // Одноразовый fetch слотов на 2026-02-16 в полночь по Дубаю
+        scheduler.scheduleSlotFetch("2026-02-16")
+        logger.info("Scheduled one-time slot fetch for 2026-02-16 at midnight Dubai time")
+
         logger.info("Tennis Booking Bot started successfully!")
         logger.info("Bot is now running. Press Ctrl+C to stop.")
 
