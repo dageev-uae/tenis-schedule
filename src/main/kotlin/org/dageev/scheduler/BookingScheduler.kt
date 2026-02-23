@@ -131,10 +131,6 @@ class BookingScheduler(
      * Обрабатывает все pending бронирования
      */
     private suspend fun processAllPendingBookings() {
-        // Используем время Dubai (UTC+4)
-        val nowDubai = ZonedDateTime.now(dubaiZone)
-        val today = nowDubai.toLocalDate()
-
         // Загружаем все pending бронирования
         val allBookings = transaction {
             Booking.find { Bookings.status eq "pending" }.toList()
@@ -144,9 +140,13 @@ class BookingScheduler(
             return
         }
 
-        logger.info("Checking ${allBookings.size} pending booking(s) at Dubai time: ${nowDubai.toLocalTime()}")
+        logger.info("Checking ${allBookings.size} pending booking(s) at Dubai time: ${ZonedDateTime.now(dubaiZone).toLocalTime()}")
 
         allBookings.forEach { booking ->
+            // Пересчитываем время на каждой итерации, т.к. предыдущий букинг мог ждать до полуночи
+            val nowDubai = ZonedDateTime.now(dubaiZone)
+            val today = nowDubai.toLocalDate()
+
             val courtDate = LocalDate.parse(booking.courtDate)
             val daysDiff = Duration.between(today.atStartOfDay(), courtDate.atStartOfDay()).toDays()
 
