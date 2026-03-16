@@ -307,9 +307,26 @@ class CourtAPI {
      * @param amenityId ID корта (из courtMapping)
      * @return результат бронирования
      */
+    private val maxRetries = 3
+
     suspend fun bookCourt(date: String, amenitySlotId: String, amenityId: String): BookingResult {
+        repeat(maxRetries) { attempt ->
+            val result = attemptBooking(date, amenitySlotId, amenityId, attempt + 1)
+            when {
+                result is BookingResult.Success -> return result
+                result is BookingResult.AlreadyBooked -> return result
+                result is BookingResult.Error && attempt < maxRetries - 1 && result.message.contains("status: 5") -> {
+                    logger.warn("Attempt ${attempt + 1}/$maxRetries failed with server error, retrying immediately...")
+                }
+                else -> return result
+            }
+        }
+        return BookingResult.Error("All $maxRetries attempts failed")
+    }
+
+    private suspend fun attemptBooking(date: String, amenitySlotId: String, amenityId: String, attempt: Int): BookingResult {
         return try {
-            logger.info("Attempting to book court for $date, slot=$amenitySlotId, amenity=$amenityId")
+            logger.info("Attempting to book court for $date, slot=$amenitySlotId, amenity=$amenityId (attempt $attempt/$maxRetries)")
 
             if (accessToken == null || accountId == null) {
                 if (!authenticate()) {
@@ -394,7 +411,7 @@ class CourtAPI {
                 }
             }
         } catch (e: Exception) {
-            logger.error("Booking error", e)
+            logger.error("Booking error on attempt $attempt", e)
             BookingResult.Error("Booking error: ${e.message}")
         }
     }
