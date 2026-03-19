@@ -77,8 +77,6 @@ class BookingScheduler(
         val nowDubai = ZonedDateTime.now(dubaiZone)
         val today = nowDubai.toLocalDate()
 
-        logger.info("Checking ${allBookings.size} pending booking(s) at Dubai time: ${nowDubai.toLocalTime()}")
-
         // Разделяем бронирования на немедленные и полуночные
         val immediateBookings = mutableListOf<Booking>()
         val midnightBookings = mutableListOf<Booking>()
